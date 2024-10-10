@@ -1,0 +1,266 @@
+---
+title: "PSTAT 126 Project 4"
+author: "Wilber Delgado & Mason Delan"
+output: html_document
+date: "12-13-2023"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=TRUE, warning=FALSE}
+library("readxl")
+WHR = read_excel("D:/WHR2023.xls")
+```
+
+For our project we are working with the World Happiness Report, which is data gathered from around the world, in which people rated various aspects of their lives and experiences such as Freedom to make life choices, Perceptions of corruption, quality of life, economic experiences, etc. We retrieved this data set from https://worldhappiness.report/data/. Because the data set is so big and also in  the form of a Time Series dataset, we decided to drop the countries from the original data and the gather a random sample of 500 which can represent the average response of each country during any given year.
+
+```{r, echo=FALSE, warning=FALSE}
+library(ggplot2)
+library(lattice)
+library(Matrix)
+
+# Drop the "Country name" column
+WHR <- WHR[, -which(names(WHR) == "Country name")]
+
+# Remove rows with missing data in specific columns
+columns_with_missing_data <- c("year", "Life Ladder", "Log GDP per capita", "Social support", 
+                               "Healthy life expectancy at birth", "Freedom to make life choices", 
+                               "Generosity", "Perceptions of corruption", "Positive affect", 
+                               "Negative affect")
+
+WHR <- WHR[complete.cases(WHR[, columns_with_missing_data]), ]
+
+```
+
+```{r, echo=FALSE}
+set.seed(1234)
+
+# Take a random sample of 500 rows from the WHR dataset
+sample_size <- 500
+random_sample <- WHR[sample(nrow(WHR), sample_size), ]
+```
+
+Put some data to the side
+```{r, echo=FALSE, warning=FALSE}
+library(caret)
+# Set a seed for reproducibility
+set.seed(1234)
+
+index <- createDataPartition(random_sample$`Healthy life expectancy at birth`, p = 0.8, list = FALSE)
+
+# Use the index to split the data into training and test sets
+training_data <- random_sample[index, ]
+test_data <- random_sample[-index, ]
+
+
+```
+
+
+```{r,echo=FALSE}
+# MLR from last project
+mlr <- lm(`Healthy life expectancy at birth` ~ year + `Life Ladder` + `Log GDP per capita` + `Negative affect`, data = training_data)
+summary(mlr)
+```
+
+
+```{r,echo=FALSE, warning=FALSE}
+
+# Extracting predictors and response variable
+X <- model.matrix(mlr)[, -1]  # Exclude intercept
+y <- residuals(mlr) + mlr$fitted.values  # Obtain residuals and add them to fitted values
+
+# Standardizing the predictors
+X_scaled <- scale(X)
+
+# Fit LASSO model with cross-validation
+library(glmnet)
+
+# Convert to matrix and vector for glmnet
+X_matrix <- as.matrix(X_scaled)
+y_vector <- as.vector(y)
+
+lasso_model <- cv.glmnet(X_matrix, y_vector, alpha = 1)
+
+# Display the optimal lambda value
+best_lambda <- lasso_model$lambda.min
+best_lambda
+
+# Plot the LASSO coefficient path
+par(mar = c(7, 4, 2.2, 0.5))
+plot(lasso_model, cex = 0.8)
+
+
+```
+
+```{r,echo=FALSE, results=FALSE}
+
+# Extract predictors and response variable from the training dataset
+X <- model.matrix(mlr)[, -1]  # Exclude intercept
+y <- residuals(mlr) + mlr$fitted.values  # Obtain residuals and add them to fitted values
+
+# Standardize the predictors
+X_scaled <- scale(X)
+
+# Perform Ridge Regression with cross-validation
+ridge_cv_model <- cv.glmnet(X_scaled, y, alpha = 0)  # alpha = 0 for Ridge
+
+# Find the optimal lambda for Ridge
+optimal_lambda_ridge <- ridge_cv_model$lambda.min
+
+# Fit the final Ridge Regression model
+final_ridge_model <- glmnet(X_scaled, y, alpha = 0, lambda = optimal_lambda_ridge)
+
+# Perform LASSO with cross-validation
+lasso_cv_model <- cv.glmnet(X_scaled, y, alpha = 1)  # alpha = 1 for LASSO
+
+# Find the optimal lambda for LASSO
+optimal_lambda_lasso <- lasso_cv_model$lambda.min
+
+# Fit the final LASSO model
+final_lasso_model <- glmnet(X_scaled, y, alpha = 1, lambda = optimal_lambda_lasso)
+
+# Compare models and analyze coefficients
+summary(mlr)  # Summary of Multiple Linear Regression
+summary(final_ridge_model)  
+summary(final_lasso_model)  
+
+
+```
+```{r,echo=FALSE}
+cat("Optimal Lambda for Ridge Regression:", optimal_lambda_ridge, "\n")
+cat("Optimal Lambda for LASSO:", optimal_lambda_lasso, "\n")
+```
+
+
+```{r,echo=FALSE}
+# Extracting observed and predicted values for MLR, RR, and LASSO
+observed_values <- test_data$`Healthy life expectancy at birth`
+
+# Predictions from MLR
+mlr_predictions <- predict(mlr, newdata = test_data)
+
+# Predictions from Ridge Regression
+ridge_predictions <- predict(final_ridge_model, newx = scale(model.matrix(mlr, data = test_data)[, -1]))
+
+# Predictions from LASSO
+lasso_predictions <- predict(final_lasso_model, newx = scale(model.matrix(mlr, data = test_data)[, -1]))
+
+# Extract values from the Ridge predictions matrix
+ridge_predictions_values <- ridge_predictions
+
+# Create a data frame for plotting
+plot_data <- data.frame(
+  Observed = observed_values,
+  MLR = mlr_predictions,
+  Ridge = ridge_predictions_values,
+  LASSO = lasso_predictions
+)
+
+# Plotting the graph
+plot(plot_data$Observed, plot_data$MLR, col = "blue", pch = 16, cex = 1, xlab = "Observed", ylab = "Predicted", main = "Model Predictions")
+points(plot_data$Observed, plot_data$Ridge, col = "red", pch = 16, cex = 2)  
+points(plot_data$Observed, plot_data$LASSO, col = "green", pch = 16, cex = 1)
+
+# Add a legend
+legend("bottomright", legend = c("MLR", "Ridge", "LASSO"), col = c("blue", "red", "green"), pch = 16)
+
+# Add a 45-degree reference line
+abline(a = 0, b = 1, col = "black", lty = 2)
+
+# Commentary
+text(0.8 * max(observed_values), 0.2 * max(observed_values), "45-degree line", adj = c(0, 0), col = "black", pos = 4)
+
+# Add grid lines
+grid()
+
+# Display the plot
+
+```
+
+Based on the graph we can see that the Ridge and Lasso medthod are  providing similar results. Based on our final MLR model from our previous project we found that the optimal Lambda for Ridge Regression: 0.5775694 and the optimal Lambda for LASSO: 0.02174512. In conclusion, it appears from the given lambda values and coefficient outputs that Ridge and LASSO produce comparable models at their respective optimal regularization strengths. This observation is consistent with the overlapping regions of the LASSO and Ridge graphs. Trade-offs between Ridge and LASSO may have to do with interpretability, model complexity, and how important sparsity is for feature selection. 
+
+
+
+
+```{r,echo=FALSE}
+# Extract residuals from the linear regression model
+residuals <- residuals(mlr)
+
+# Plot histogram of residuals
+hist(residuals, main = "Histogram of Residuals", xlab = "Residuals")
+
+# Q-Q plot of residuals
+qqnorm(residuals)
+qqline(residuals)
+
+# Perform Shapiro-Wilk test for normality
+shapiro.test(residuals)
+
+```
+
+Based on our original model we can see that the histogram of the residuals seems to be pretty normal. However in the QQ plot of the residuals, the residuals show a departure from normality, so we want to apply the Box Cox transformation to see if it can help the QQ plot display whole normality.The Box-Cox transformation is a method used to stabilize the variance and make a dataset more closely approximate a normal distribution
+
+
+```{r,echo=FALSE, warning=FALSE}
+library(MASS)
+
+# Extract the response variable and predictor variables from the training data
+response_variable <- training_data$`Healthy life expectancy at birth`
+predictor_variables <- training_data[, c("year", "Life Ladder", "Log GDP per capita", "Negative affect")]
+
+# Use the boxcox() function to find the optimal lambda
+boxcox_result <- boxcox(mlr, lambda = seq(-2, 2, 0.1))
+optimal_lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+# Apply the Box-Cox transformation to the response variable
+transformed_response <- ifelse(optimal_lambda == 0, log(response_variable), 
+                               (response_variable^optimal_lambda - 1) / optimal_lambda)
+
+# Create a new data frame with transformed response and predictor variables
+transformed_data <- data.frame(
+  transformed_response = transformed_response,
+  predictor_variables
+)
+
+optimal_lambda
+
+# Fit a new linear regression model on the transformed data
+mlr_transformed <- lm(transformed_response ~ year + `Life.Ladder` + `Log.GDP.per.capita` + `Negative.affect`, 
+                      data = transformed_data)
+
+# Extract residuals from the linear regression model
+residuals2 <- residuals(mlr_transformed)
+
+# Plot histogram of residuals
+hist(residuals2, main = "Histogram of Residuals", xlab = "Residuals")
+
+# Q-Q plot of residuals
+qqnorm(residuals2)
+qqline(residuals2)
+
+# Perform Shapiro-Wilk test for normality
+shapiro.test(residuals2)
+```
+```{r,echo=FALSE}
+summary(mlr_transformed)
+```
+After doing the Box Cox transformation on or linear model, we see that although the QQ plot does reflect much more normal residuals, we see that our histogram does not. Furthermore, looking at the summary of the transformed model, we can see that our variables become insignificant than our original model. We can also see that our R squared lowered by about 20%. With all of this combined we can conclude that our model is likely the best fit and does not require anymore transformation that could help make the QQ plot of the residuals look more normal. Lastly we can also see that the Box-Cox tranformed model failed the Shapiro-Wilk test as the p value is less than 0.05.
+
+
+```{r,echo=FALSE}
+# Assuming mlr_transformed is your transformed model
+# Extract coefficients
+coefficients_transformed <- coef(mlr_transformed)
+
+# Back-transform coefficients
+coefficients_original <- coefficients_transformed^(1/2)
+
+# Display back-transformed coefficients
+print(coefficients_original)
+```
+
+The NaN result for the coefficient of Log GDP per Capita in the back-transformed model suggests a potential violation of the non-negativity condition. The Box-Cox transformation is not defined for zero or negative values, and when applied to Log GDP per Capita, it may have encountered issues with zero or negative values in the original data.
+

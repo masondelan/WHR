@@ -1,0 +1,306 @@
+---
+title: "Project 3"
+author: "Wilber Delgado & Mason Delan"
+output: html_document
+date: "2023-12-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=TRUE}
+library("readxl")
+WHR = read_excel("D:/WHR2023.xls")
+```
+
+We are working with the World Happiness Report data set, which is a collection of surveys from around the world, asking peoples different judgement on a variety of things that could influence happiness, such as social support, freedom to make life choices, generosity, etc.
+To get a better set of data we are going to drop the country column, and drop any rows with missing data. Then we are going to take a random sample of 500 to get a normalized dataset.
+
+```{r, echo=FALSE}
+# Drop the "Country name" column
+WHR <- WHR[, -which(names(WHR) == "Country name")]
+
+# Remove rows with missing data in specific columns
+columns_with_missing_data <- c("year", "Life Ladder", "Log GDP per capita", "Social support", 
+                               "Healthy life expectancy at birth", "Freedom to make life choices", 
+                               "Generosity", "Perceptions of corruption", "Positive affect", 
+                               "Negative affect")
+
+WHR <- WHR[complete.cases(WHR[, columns_with_missing_data]), ]
+
+```
+
+```{r, echo=FALSE}
+set.seed(1234)
+
+# Take a random sample of 500 rows from the WHR dataset
+sample_size <- 500
+random_sample <- WHR[sample(nrow(WHR), sample_size), ]
+```
+
+
+Put some data to the side
+```{r, echo=FALSE}
+library(caret)
+# Set a seed for reproducibility
+set.seed(1234)
+
+index <- createDataPartition(random_sample$`Healthy life expectancy at birth`, p = 0.8, list = FALSE)
+
+# Use the index to split the data into training (80%) and test (20%) sets
+training_data <- random_sample[index, ]
+test_data <- random_sample[-index, ]
+
+
+```
+
+
+
+```{r, echo=FALSE}
+library(GGally)
+
+# Create pairs plot
+pairs_plot <- ggpairs(random_sample, 
+                      columns = c("Life Ladder", "Log GDP per capita", "Social support", 
+                                  "Healthy life expectancy at birth", "Freedom to make life choices", 
+                                  "Generosity", "Perceptions of corruption", "Positive affect", 
+                                  "Negative affect"))
+
+# Print the pairs plot
+print(pairs_plot)
+
+```
+
+```{r,echo=FALSE}
+# Calculate correlation coefficients
+cor_matrix <- cor(random_sample[, c("Life Ladder", "Log GDP per capita", "Social support", 
+                                    "Healthy life expectancy at birth", "Freedom to make life choices", 
+                                    "Generosity", "Perceptions of corruption", "Positive affect", 
+                                    "Negative affect")], method = "pearson")
+
+# Print the correlation matrix
+print(cor_matrix)
+
+```
+
+
+Based on the ggpairs plots we can see that our response variable 'Healthy Life Expectancy at Birth' is highly correlated to 'Life Ladder' and 'GDP Per Capita'. 
+
+The correlation between "Life Ladder" and "Freedom to make life choices" is 0.5566, indicating a moderate positive correlation. Depending on the nature of the relationship, you might explore the inclusion of a quadratic term to capture potential non-linearities.
+
+The correlation between "Life Ladder" and "Perceptions of corruption" is -0.4467. This negative correlation suggests that as perceptions of corruption decrease, life satisfaction tends to increase. In some cases, a log transformation might be considered if the relationship is better captured on a log scale.
+
+There might be potential interactions between variables that could enhance the model. For example, interactions between "Freedom to make life choices" and other variables could be explored, given its moderate correlation with "Life Ladder."
+
+
+As far as feature engineering we will be taking out any rows that have missing data. Also, we are not going to use any of the interaction variables. 
+
+```{r,echo=FALSE}
+columns_with_missing_data <- c("year", "Life Ladder", "Log GDP per capita", "Social support", 
+                               "Healthy life expectancy at birth", "Freedom to make life choices", 
+                               "Generosity", "Perceptions of corruption", "Positive affect", 
+                               "Negative affect")
+
+random_sample <- random_sample[complete.cases(random_sample[, columns_with_missing_data]), ]
+
+```
+
+
+```{r,echo=FALSE}
+lm_model <- lm(`Healthy life expectancy at birth` ~ . + `Life Ladder` * `Freedom to make life choices`, data = training_data)
+
+# Print the summary of the linear regression model
+summary(lm_model)
+
+```
+
+```{r,echo=FALSE}
+library(randomForest)
+
+# Replace spaces with dots in column names for compatibility
+colnames(training_data) <- gsub(" ", ".", colnames(training_data))
+
+# Fit the Random Forest model
+rf_model <- randomForest(`Healthy.life.expectancy.at.birth` ~ ., data = training_data)
+
+# Print the model summary
+print(rf_model)
+
+```
+
+
+We see that our linear model explains about 69.7% of the variability in the response variable. Key significant predictors include Life Ladder, Log GDP per capita, and the interaction term between Life Ladder and Freedom to make life choices. The Random Forest model explains approximately 74.14% of the variability in the response variable. Both models seem to perform reasonably well.
+
+
+```{r, echo=FALSE}
+library(caret)
+
+# Function to calculate Root Mean Squared Error (RMSE)
+calculate_rmse <- function(model, data) {
+  predictions <- predict(model, newdata = data)
+  rmse <- sqrt(mean((data$`Healthy.life.expectancy.at.birth` - predictions)^2))
+  return(rmse)
+}
+
+# Cross-validation for Multiple Linear Regression
+lm_cv <- train(
+  x = training_data[, -which(names(training_data) == "Healthy.life.expectancy.at.birth")],
+  y = training_data$`Healthy.life.expectancy.at.birth`,
+  method = "lm",
+  trControl = trainControl(method = "cv", number = 5),
+  metric = "RMSE"
+)
+
+# Print cross-validation results
+print(lm_cv)
+
+```
+
+```{r,echo=FALSE}
+# Cross-validation for Random Forest
+rf_cv <- train(
+  x = training_data[, -which(names(training_data) == "Healthy.life.expectancy.at.birth")],
+  y = training_data$`Healthy.life.expectancy.at.birth`,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  metric = "RMSE"
+)
+
+# Print cross-validation results for Random Forest
+print(rf_cv)
+
+```
+
+```{r,echo=FALSE}
+# Extract RMSE values
+rmse_lm <- lm_cv$results$RMSE
+rmse_rf <- min(rf_cv$results$RMSE)  # Select the minimum RMSE value from Random Forest results
+
+# Print RMSE values
+cat("RMSE for Multiple Linear Regression:", rmse_lm, "\n")
+cat("RMSE for Random Forest:", rmse_rf, "\n")
+
+```
+
+Based on our results, the Random Forest model seems to have a lower RMSE which indicates it is likely a better model for predictive performance. 
+
+
+```{r,echo=FALSE}
+# Fit a full model (including all predictors)
+full_model <- lm(`Healthy.life.expectancy.at.birth` ~ ., data = training_data)
+
+# Perform stepwise selection using AIC
+stepwise_model_aic <- step(full_model, direction = "both", trace = 0, k = 2)
+
+# Perform stepwise selection using BIC
+stepwise_model_bic <- step(full_model, direction = "both", trace = 0, k = log(nrow(training_data)))
+
+# Compare models based on AIC and BIC
+summary(stepwise_model_aic)
+summary(stepwise_model_bic)
+```
+
+
+In selecting the best statistical model for predicting Healthy Life Expectancy at birth, a step wise variable selection approach was used, utilizing both forward and backward steps guided by AIC and BIC. This method balances model complexity and the accuracy of the fit. After considering various model specifications, the chosen model includes the predictors year, Life Ladder, Log GDP per capita, and Negative affect. The AIC and BIC, which penalize over fitting, indicated that this set of variables provides a good trade-off between explanatory power and simplicity. The final model demonstrated a high adjusted R-squared value of 0.6943, indicating that approximately 69.43% of the variability in Healthy Life Expectancy at birth is explained by the selected predictors. Additionally, the F-statistic was highly significant, providing further evidence of the model's overall significance. These results suggest that the chosen model is a great representation of the relationship between the predictors and the response variable.
+
+
+
+The intercept, -270.94, represents the estimated Healthy Life Expectancy at birth when all predictor variables are zero.
+The coefficient for year suggests that, on average, each additional year is associated with an increase of approximately 0.1426 units in Healthy Life Expectancy at birth.
+For each one-unit increase in the Life Ladder score, we expect Healthy Life Expectancy at birth to increase by approximately 1.6657 units.
+The coefficient implies that a one-unit increase in the logarithm of GDP per capita is associated with an estimated increase of about 3.8033 units in Healthy Life Expectancy at birth.
+Finally, a one-unit increase in Negative Affect is associated with an estimated increase of about 8.1093 units in Healthy Life Expectancy at birth.
+
+
+
+```{r,echo=FALSE}
+# Update column names in test_data
+colnames(test_data) <- c("year", "Life.Ladder", "Log.GDP.per.capita", "Social.support", 
+                          "Healthy.life.expectancy.at.birth", "Freedom.to.make.life.choices", 
+                          "Generosity", "Perceptions.of.corruption", "Positive.affect", 
+                          "Negative.affect")
+
+# Now try making predictions on the test data again
+test_predictions <- predict(stepwise_model_aic, newdata = test_data)
+
+# Calculate R-squared and adjusted R-squared
+test_r_squared <- 1 - sum((test_data$Healthy.life.expectancy.at.birth - test_predictions)^2) / sum((test_data$Healthy.life.expectancy.at.birth - mean(test_data$Healthy.life.expectancy.at.birth))^2)
+n <- nrow(test_data)
+p <- length(coefficients(stepwise_model_aic)) - 1  # Number of predictors
+test_adj_r_squared <- 1 - ((1 - test_r_squared) * (n - 1) / (n - p - 1))
+
+# Report the values
+cat("Test R-squared:", test_r_squared, "\n")
+cat("Test adjusted R-squared:", test_adj_r_squared, "\n")
+
+```
+
+
+The test R-squared value is 0.7948604, and the test adjusted R-squared value is 0.7861311. These are relatively high values, suggesting that the model performs well in explaining the variability in the Healthy life expectancy at birth. A high R-squared does not guarantee that the model will accurately describe the population. There might be other factors or unobserved variables that could influence the response variable.
+
+
+```{r,echo=FALSE}
+# Residual analysis for the selected model (stepwise_model_aic)
+residuals <- residuals(stepwise_model_aic)
+
+# Plotting the residuals vs. fitted values
+plot(stepwise_model_aic$fitted.values, residuals, main = "Residuals vs. Fitted Values", 
+     xlab = "Fitted Values", ylab = "Residuals", pch = 16, col = "blue")
+
+# Adding a horizontal line at y = 0
+abline(h = 0, col = "red")
+
+# Plotting a histogram of residuals
+hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue")
+
+# Performing a Q-Q plot for residuals
+qqnorm(residuals)
+qqline(residuals, col = "red")  
+
+
+# Influence plot to identify influential observations
+plot(stepwise_model_aic, which = 5, main = "Influence Plot")
+
+
+```
+
+Based on the Residuals vs. Fitted Values, with the points around the line, we can assume that the model assumptions are met ( such as heteroscedasticity, non-linearity, etc.). The concentration of residuals in the central range might indicate that the model is performing well for a majority of observations. The deviation from the line at the extremes could suggest departures from normality, possibly indicating the presence of outliers or non-normal features in the data. The majority of observations have low to moderate influence on the model, as indicated by their distance to the red line in the lower Cook's Distance range.
+A few points deviate from the red line, indicating higher Cook's Distance. 
+
+
+
+
+```{r,echo=FALSE}
+
+model <- stepwise_model_aic  
+
+# Example values from the test_data
+new_data <- data.frame(
+  year = 2022,  
+  Life.Ladder = 7.545,  
+  Log.GDP.per.capita = 11.653,  
+  Negative.affect = 0.4769  
+  
+)
+
+# Calculate the mean predicted value and its confidence interval
+mean_pred <- predict(model, newdata = new_data, interval = "confidence", level = 0.95)
+
+# Calculate the prediction interval for a future observation
+pred_interval <- predict(model, newdata = new_data, interval = "prediction", level = 0.95)
+
+# Print the results
+print("Confidence Interval for Mean Predicted Value:")
+print(mean_pred)
+
+print("Prediction Interval for Future Predicted Value:")
+print(pred_interval)
+
+```
+
+ The model predicts a mean Healthy Life Expectancy at Birth of approximately 78.20, with a 95% confidence interval ranging from 76.68 to 79.72. This implies that, based on the given set of predictors, we are reasonably confident that the true average Healthy Life Expectancy at Birth falls within this interval. Also, for an individual future observation, the model predicts a value of 78.20, and we are 95% confident that the actual value will fall within the broader prediction interval of 70.29 to 86.10. This wider range accounts for the variability in individual observations and highlights the importance of considering prediction intervals for a more comprehensive understanding of the model's predictive capability.
+ 
+ 
+ 
+In conclusion, our analysis aimed to understand the factors influencing healthy life expectancy at birth. We initially explored feature engineering, model selection, and cross-validation to determine the most suitable predictive models. The random forest model and a multiple linear regression model were considered, with the latter incorporating interaction terms. Cross-validation results favored the random forest model, which exhibited a lower RMSE. However, for interpretability and simplicity, we opted for a multiple linear regression model. Stepwise selection, based on AIC and BIC, helped refine the model to include the 'year,' 'Life Ladder,' 'Log GDP per capita,' and 'Negative affect' as significant predictors. 
